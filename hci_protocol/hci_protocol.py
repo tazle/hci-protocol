@@ -351,28 +351,31 @@ NumberOfCompletedPacketsEvent = "hci_number_of_completed_packets_event" / Struct
     "number_of_completed_packets" / Array(this.number_of_handles, Int16ul)
 )
 
-HciEventPacket = "hci_event_packet" / Struct(
-    "event" / Enum(Int8ul,
+HciEventType = Enum(Int8ul,
                    DISCONNECTION_COMPLETE=0x05,
                    COMMAND_COMPLETE=0x0E,
                    COMMAND_STATUS=0x0F,
                    NUMBER_OF_COMPLETED_PACKETS=0x13,
                    LE_META_EVENT=0x3E,
                    default=Pass
-                   ),
+                   )
+print(dir(HciEventType))
+
+HciEventPacket = "hci_event_packet" / Struct(
+    "event" / HciEventType,
     "length" / Switch(this.event,
                       {
-                          "NUMBER_OF_COMPLETED_PACKETS": Rebuild(Int8ul, lambda x: NumberOfCompletedPacketsEvent.sizeof(x.payload)),
-                          "LE_META_EVENT": Rebuild(Int8ul, lambda x: LeMetaEvent.sizeof(x.payload)),
+                          HciEventType.NUMBER_OF_COMPLETED_PACKETS: Rebuild(Int8ul, lambda x: NumberOfCompletedPacketsEvent.sizeof(x.payload)),
+                          HciEventType.LE_META_EVENT: Rebuild(Int8ul, lambda x: LeMetaEvent.sizeof(x.payload)),
                       }, default=Int8ul
                       ),
     "payload" / Switch(this.event,
                        {
-                           "DISCONNECTION_COMPLETE": DisconnectEvent,
-                           "COMMAND_COMPLETE": CommandCompletedEvent,
-                           "COMMAND_STATUS": CommandStatusEvent,
-                           "NUMBER_OF_COMPLETED_PACKETS": NumberOfCompletedPacketsEvent,
-                           "LE_META_EVENT": LeMetaEvent
+                           HciEventType.DISCONNECTION_COMPLETE: DisconnectEvent,
+                           HciEventType.COMMAND_COMPLETE: CommandCompletedEvent,
+                           HciEventType.COMMAND_STATUS: CommandStatusEvent,
+                           HciEventType.NUMBER_OF_COMPLETED_PACKETS: NumberOfCompletedPacketsEvent,
+                           HciEventType.LE_META_EVENT: LeMetaEvent
                        }, default=Array(this.length, Byte),
                        ),
 )
@@ -395,23 +398,24 @@ HciSynchronousDataPacket = "hci_synchronous_data_packet" / Struct(
     "data" / Bytes(this.length)
 )
 
+HciPacketType = Enum(Int8ul,
+                     COMMAND_PACKET=0x01,
+                     ACL_DATA_PACKET=0x02,
+                     SYNCHRONOUS_DATA_PACKET=0x03,
+                     EVENT_PACKET=0x04,
+                     default=Pass
+)
 # ============================================================================
 # HCI PACKET
 # ============================================================================
 HciPacket = "hci_packet" / Struct(
-    "type" / Enum(Int8ul,
-                  COMMAND_PACKET=0x01,
-                  ACL_DATA_PACKET=0x02,
-                  SYNCHRONOUS_DATA_PACKET=0x03,
-                  EVENT_PACKET=0x04,
-                  default=Pass
-                  ),
+    "type" / HciPacketType,
     "payload" / Switch(this.type,
                        {
-                           "COMMAND_PACKET": HciCommandPacket,
-                           "ACL_DATA_PACKET": AclDataPacket,
-                           "EVENT_PACKET": HciEventPacket,
-                           "SYNCHRONOUS_DATA_PACKET": HciSynchronousDataPacket
+                           HciPacketType.COMMAND_PACKET: HciCommandPacket,
+                           HciPacketType.ACL_DATA_PACKET: AclDataPacket,
+                           HciPacketType.EVENT_PACKET: HciEventPacket,
+                           HciPacketType.SYNCHRONOUS_DATA_PACKET: HciSynchronousDataPacket
                        }, default=Pass
                        ),
 )

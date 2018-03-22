@@ -6,8 +6,9 @@ import struct
 import logging
 import argparse
 
+from collections import defaultdict
 from construct import RawCopy
-from .hci_protocol import HciPacket
+from hci_protocol.hci_protocol import HciPacket, HciPacketType
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -25,26 +26,38 @@ class HciSniffer(object):
         self._hci_device_number = hci_device_number
         log.info("Socket created and bound")
 
-    def run(self):
+    def stream(self):
         while True:
             readable, _, _ = select.select([self._hci_socket], [], [])
             if readable is not None:
                 packet = self._hci_socket.recv(4096)
-                log.info('SOCKET: %s', RawCopy(HciPacket).parse(packet))
+                yield RawCopy(HciPacket).parse(packet)
 
 
 def main():
+    def counts_msg(counts):
+        return ", ".join(str(k) + " " + str(counts[k]) for k in sorted(counts.keys()))
+    
     logging.basicConfig(level=logging.WARNING)
     logging.basicConfig(level=logging.DEBUG)
     parser = argparse.ArgumentParser()
     parser.add_argument('--hci', type=int, default=0, help='The number of HCI device to connect to')
-    parser.add_argument('--log-file', type=str, default=None, help='Dumps log to file')
     args = parser.parse_args()
-    if args.log_file is not None:
-        log.addHandler(logging.FileHandler(args.log_file))
     hci_sniffer = HciSniffer(args.hci)
+
+    packet_type_counts = defaultdict(lambda: 0)
+    event_type_counts = defaultdict(lambda: 0)
+    log.info(dir(HciPacketType))
     try:
-        hci_sniffer.run()
+        for i, packet_and_data in enumerate(hci_sniffer.stream()):
+            packet = packet_and_data.value
+            if i%100 == 0:
+                log.info(counts_msg(packet_type_counts))
+                log.info(counts_msg(event_type_counts))
+            packet_type_counts[packet.type] += 1
+            if packet.type == HciPacketType.EVENT_PACKET:
+                event_type_counts[packet.payload.type] += 1
+
     except KeyboardInterrupt:
         pass
 
