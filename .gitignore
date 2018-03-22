@@ -102,3 +102,6 @@ ENV/
 
 # Emacs
 *~
+
+# pytest
+.pytest_cache
