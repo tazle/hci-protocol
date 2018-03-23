@@ -310,16 +310,46 @@ LeConnectionUpdateCompleteEvent = "hci_evt_le_conn_update_complete" / Struct(
     "supv_timeout" / Int16ul
 )
 
+def le_adv_pack_arrays(arrays, ctx):
+    result = []
+    for arr in arrays:
+        result.extend(arr)
+    return result
+
+def le_adv_unpack_arrays(array, ctx):
+    arrays = []
+    start_idx = 0
+    for length in ctx.data_lengths:
+        arrays.append(array[start_idx:start_idx+length])
+        start_idx += length
+    return arrays
+
+LeAdvertisingReportEvent = "hci_evt_le_advertising_report" / Struct(
+    "num_reports" / Byte,
+    "event_types" / Array(this.num_reports, Byte),
+    "address_types" / Array(this.num_reports, Byte),
+    "addresses" / Array(this.num_reports, MacAddress),
+    "data_lengths" / Array(this.num_reports, Byte),
+    "datas" / ExprAdapter(Array(lambda x: sum(x.data_lengths), Byte),
+                              encoder=le_adv_pack_arrays ,
+                              decoder=le_adv_unpack_arrays),
+    "rssis" / Array(this.num_reports, Int8sl)
+)
+
+LeMetaEventSubtype = Enum(Int8ul,
+                          LE_CONNECTION_COMPLETED=0x01,
+                          LE_ADVERTISING_REPORT=0x02,
+                          LE_CONNECTION_UPDATE_COMPLETED=0x03,
+                          default=Pass
+)
+
 LeMetaEvent = "hci_le_meta_event" / Struct(
-    "subevent" / Enum(Int8ul,
-                      LE_CONNECTION_COMPLETED=0x01,
-                      LE_CONNECTION_UPDATE_COMPLETED=0x03,
-                      default=Pass
-                      ),
+    "subevent" / LeMetaEventSubtype,
     "payload" / Switch(this.subevent,
                        {
-                           "LE_CONNECTION_COMPLETED": LeConnectionCompleteEvent,
-                           "LE_CONNECTION_UPDATE_COMPLETED": LeConnectionUpdateCompleteEvent
+                           LeMetaEventSubtype.LE_CONNECTION_COMPLETED: LeConnectionCompleteEvent,
+                           LeMetaEventSubtype.LE_ADVERTISING_REPORT: LeAdvertisingReportEvent,
+                           LeMetaEventSubtype.LE_CONNECTION_UPDATE_COMPLETED: LeConnectionUpdateCompleteEvent
                        }, default=Array(this._.length - 1, Byte)
                        )
 )
@@ -416,7 +446,6 @@ HciEventType = Enum(Int8ul,
                    LE_META_EVENT=0x3E,
                    default=Pass
                    )
-print(dir(HciEventType))
 
 HciEventPacket = "hci_event_packet" / Struct(
     "event" / HciEventType,
