@@ -40,12 +40,15 @@ MacAddress = ExprAdapter(Byte[6],
 # ============================================================================
 # HCI COMMAND PACKET
 # ============================================================================
-ogf = Enum(BitsInteger(6),
+OpCodeGroup = Enum(BitsInteger(6),
+           LINK_CONTROL=0x01,
+           HCI_POLICY=0x02,
+           CONTROLLER_AND_BASEBAND=0x03,
            INFORMATIONAL_PARAMETERS=0x04,
            default=Pass
            )
 
-ocf = Switch(
+OpCodeCommand = Switch(
     this.ogf,
     {
         'INFORMATIONAL_PARAMETERS': Enum(BitsInteger(10), READ_BD_ADDRESS_COMMAND=0x0009, default=Pass)
@@ -53,16 +56,16 @@ ocf = Switch(
     default=BitsInteger(10)
 )
 
-OgfOcfPair = ByteSwappedKnownSize(
+OpCode = ByteSwappedKnownSize(
     BitStruct(
-        "ogf" / ogf,
-        "ocf" / ocf
+        "ogf" / OpCodeGroup,
+        "ocf" / OpCodeCommand
     ),
     2
 )
 
 HciCommandPacket = "hci_command_packet" / Struct(
-    Embedded(OgfOcfPair),
+    "opcode" / OpCode,
     "length" / Int8ul,
     "payload" / Array(this.length, Byte),
 )
@@ -71,7 +74,11 @@ HciCommandPacket = "hci_command_packet" / Struct(
 # ============================================================================
 # ACL DATA PACKET
 # ============================================================================
-ATT_CID = 4
+SIGNALING_CID = 1
+CONNECTIONLESS_CID = 2
+LE_ATTRIBUTE_CID = 4
+LE_SIGNALING_CID = 5
+LE_SECURITY_MANAGER_CID = 6
 
 AttOpcode = Enum(
     Int8ul,
@@ -185,40 +192,90 @@ AttCommandPacket = "att_command_packet" / Struct(
     }, default=Array(this._.length - 1, Byte))
 )
 
+SignalingChannelPacket = "signaling_channel_packet" / Struct(
+    "code" / Byte, # TODO Parse
+    "identifier" / Byte,
+    "length" / Int16ul,
+    "data" / Array(this.length, Byte)
+)
+
+LeSignalingChannelPacket = "le_signaling_channel_packet" / Struct(
+    "code" / Byte, # TODO Parse
+    "identifier" / Byte,
+    "length" / Int16ul,
+    "data" / Array(this.length, Byte)
+)
+
+ConnectionlessPacket = "connectionless_packet" / Struct(
+    "psm" / Int16ul,
+    "data" / GreedyRange(Byte),
+)
+
 L2CapPacket = "l2cap_packet" / Struct(
     "length" / Int16ul,
-    # "length" / Switch(this.cid, {
-    #     ATT_CID: Rebuild(Int16ul, lambda x: AttCommandPacket.sizeof(x.payload))
-    # }, default=Int16ul),
     "cid" / Int16ul,
     "payload" / Switch(this.cid, {
-        ATT_CID: AttCommandPacket
-    }, default=Array(this.length, Byte))
+        SIGNALING_CID: SignalingChannelPacket,
+        CONNECTIONLESS_CID: ConnectionlessPacket,
+        LE_ATTRIBUTE_CID: AttCommandPacket,
+        LE_SIGNALING_CID: LeSignalingChannelPacket,
+    }, default=Array(this.length, Byte)),
 )
+
+def index_bytes(bs, idx):
+    val = bs[idx]
+    if isinstance(val, int):
+        return val
+    else:
+        return ord(val)
+
+if len(bytes([1])) > 1:
+    def to_bytes(intlist):
+        return bytes("".join(chr(x) for x in intlist))
+else:
+    def to_bytes(intlist):
+        return bytes(intlist)
+
+def _expand_flags(data):
+    val = (index_bytes(data, 1) << 8) + index_bytes(data, 0)
+    handle = val & 0xfff
+    flag1 = (val >> 12) & 0x3
+    flag2 = (val >> 14) & 0x3
+    res = to_bytes([handle & 0xff, (handle >> 8) & 0xff, flag1, flag2]) + data[2:]
+    return res
+
+def _contract_flags(data):
+    val = (index_bytes(data, 1) << 8) + index_bytes(data, 0)
+    flag1 = data[2]
+    flag2 = data[3]
+    val |= ((flag1 & 0x3) << 12)
+    val |= ((flag2 & 0x3) << 14)
+    return to_bytes([val & 0xff, (val >> 8) & 0xff]) + data[4:]
+
+AclDataPacketHeader = "hci_acl_data_packet_header" / TransformData(Struct(
+    "handle" / Int16ul,
+    "pb" / Byte,
+    "bc" / Byte,
+    "length" / Int16ul,
+), _expand_flags, 4, _contract_flags, 4)
+
 
 AclDataPacket = "hci_acl_data_packet" / Struct(
-    Embedded(ByteSwapped(
-        BitStruct(
-            "flags" / BitsInteger(4),
-            "handle" / BitsInteger(12)
-        )
-    )),
-    "length" / Rebuild(Int16ul, this.payload.length + 4),
+    "header" / AclDataPacketHeader,
     "payload" / L2CapPacket
 )
-
 
 # ============================================================================
 # HCI EVENT PACKET
 # ============================================================================
 CommandCompletedEvent = "command_complete_event" / Struct(
     "ncmd" / Int8ul,
-    Embedded(OgfOcfPair),
+    "opcode" / OpCode,
     "status" / Int8ul,
     "payload" / Switch(
-        this.ogf,
+        this.opcode.ogf,
         {
-            'INFORMATIONAL_PARAMETERS': Switch(this.ocf,
+            'INFORMATIONAL_PARAMETERS': Switch(this.opcode.ocf,
                                                {'READ_BD_ADDRESS_COMMAND': MacAddress},
                                                default=Array(this._.length - 4, Byte)
                                                ),
@@ -384,18 +441,12 @@ HciEventPacket = "hci_event_packet" / Struct(
 # ============================================================================
 # HCI SYNCHRONOUS DATA PACKET
 # ============================================================================
-HciSynchronousDataPacket = "hci_synchronous_data_packet" / Struct(
-    Embedded(
-        ByteSwapped(
-            Struct(
-                "connection_handle" / BytesInteger(12),
-                "packet_status_flag" / BitsInteger(2),
-                "RFU" / BitsInteger(2)
-            )
-        )
-    ),
-    "data_total_length" / Int8ul,
-    "data" / Bytes(this.length)
+HciSynchronousDataPacket = "hci_synchronous_data_packet" / BitStruct(
+    Padding(2),
+    "packet_status_flag" / BitsInteger(2),
+    "handle" / BitsInteger(12),
+    "data_total_length" / BitsInteger(8),
+    "data" / Bytewise(Bytes(this.data_total_length))
 )
 
 HciPacketType = Enum(Int8ul,
@@ -419,3 +470,4 @@ HciPacket = "hci_packet" / Struct(
                        }, default=Pass
                        ),
 )
+
