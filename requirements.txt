@@ -1,1 +1,1 @@
-construct>=2.9,<3
+construct>=2.9.43,<3
