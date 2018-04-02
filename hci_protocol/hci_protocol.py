@@ -252,7 +252,7 @@ def _contract_flags(data):
     val |= ((flag2 & 0x3) << 14)
     return to_bytes([val & 0xff, (val >> 8) & 0xff]) + data[4:]
 
-AclDataPacketHeader = "hci_acl_data_packet_header" / TransformData(Struct(
+AclDataPacketHeader = "hci_acl_data_packet_header" / Transformed(Struct(
     "handle" / Int16ul,
     "pb" / Byte,
     "bc" / Byte,
